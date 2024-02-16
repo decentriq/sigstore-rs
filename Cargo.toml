@@ -37,7 +37,8 @@ oauth = []
 
 rekor-native-tls = ["reqwest/native-tls", "rekor"]
 rekor-rustls-tls = ["reqwest/rustls-tls", "rekor"]
-rekor = ["reqwest"]
+rekor-apis = ["reqwest", "rekor-models"]
+rekor-models = []
 
 tuf = ["tough", "regex"]
 

@@ -268,7 +268,7 @@ pub mod oauth;
 #[cfg(feature = "registry")]
 pub mod registry;
 
-#[cfg(feature = "rekor")]
+#[cfg(feature = "rekor-models")]
 pub mod rekor;
 
 #[cfg(feature = "tuf")]
