@@ -35,8 +35,8 @@ oauth-native-tls = ["openidconnect/native-tls", "oauth"]
 oauth-rustls-tls = ["openidconnect/rustls-tls", "oauth"]
 oauth = []
 
-rekor-native-tls = ["reqwest/native-tls", "rekor"]
-rekor-rustls-tls = ["reqwest/rustls-tls", "rekor"]
+rekor-native-tls = ["reqwest/native-tls", "rekor-apis"]
+rekor-rustls-tls = ["reqwest/rustls-tls", "rekor-apis"]
 rekor-apis = ["reqwest", "rekor-models"]
 rekor-models = []
 
