@@ -88,7 +88,7 @@ impl FromStr for Checkpoint {
 
 impl CheckpointNote {
     // Output is the part of the checkpoint that is signed.
-    fn marshal(&self) -> String {
+    pub fn marshal(&self) -> String {
         let hash_b64 = BASE64_STANDARD.encode(self.hash);
         let other_content: String = self
             .other_content
@@ -100,7 +100,7 @@ impl CheckpointNote {
             self.origin, self.size
         )
     }
-    fn unmarshal(s: &str) -> Result<Self, ParseCheckpointError> {
+    pub fn unmarshal(s: &str) -> Result<Self, ParseCheckpointError> {
         // refer to: https://github.com/sigstore/rekor/blob/d702f84e6b8b127662c5e717ee550de1242a6aec/pkg/util/checkpoint.go
         // note is separated by new lines
         let split_note = s.split('\n').collect::<Vec<_>>();
