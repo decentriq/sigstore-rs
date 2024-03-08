@@ -5,11 +5,11 @@ use crate::errors::SigstoreError;
 use crate::errors::SigstoreError::UnexpectedError;
 use digest::Output;
 pub use proof_verification::MerkleProofError;
-pub(crate) use proof_verification::MerkleProofVerifier;
-pub(crate) use rfc6962::{Rfc6269Default, Rfc6269HasherTrait};
+pub use proof_verification::MerkleProofVerifier;
+pub use rfc6962::{Rfc6269Default, Rfc6269HasherTrait};
 
 /// Many rekor models have hex-encoded hashes, this functions helps to avoid repetition.
-pub(crate) fn hex_to_hash_output(
+pub fn hex_to_hash_output(
     h: impl AsRef<[u8]>,
 ) -> Result<Output<Rfc6269Default>, SigstoreError> {
     hex::decode(h)
