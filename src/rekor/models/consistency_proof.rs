@@ -31,9 +31,9 @@ impl ConsistencyProof {
     /// Verify this consistency proof against the given parameters.
     pub fn verify(
         &self,
-        old_size: usize,
+        old_size: u64,
         old_root: &str,
-        new_size: usize,
+        new_size: u64,
     ) -> Result<(), SigstoreError> {
         // decode hashes from hex and convert them to the required data structure
         // immediately return an error when conversion fails

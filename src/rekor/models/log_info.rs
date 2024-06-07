@@ -89,7 +89,7 @@ impl LogInfo {
     /// ```
     pub fn verify_consistency(
         &self,
-        old_size: usize,
+        old_size: u64,
         old_root: &str,
         consistency_proof: &ConsistencyProof,
         rekor_key: &CosignVerificationKey,
