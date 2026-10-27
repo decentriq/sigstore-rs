@@ -5,7 +5,7 @@ use digest::{Digest, Output};
 #[cfg(any(
     feature = "sign",
     feature = "sigstore-trust-root",
-    feature = "rekor",
+    feature = "rekor-models",
     feature = "verify"
 ))]
 use hex::ToHex;
@@ -23,11 +23,12 @@ pub enum MerkleProofError {
     WrongEmptyTreeHash,
 }
 
-pub(crate) trait MerkleProofVerifier<O>: Rfc6269HasherTrait<O>
+pub trait MerkleProofVerifier<O>: Rfc6269HasherTrait<O>
 where
     O: Eq + AsRef<[u8]> + Clone + Debug,
 {
-    /// Used to verify hashes.
+    /// Used to verify hashes. The caller supplies the proof-specific error.
+    #[allow(clippy::result_unit_err)] // Preserve the existing helper's API when exposing the trait.
     fn verify_match(a: &O, b: &O) -> Result<(), ()> {
         (a == b).then_some(()).ok_or(())
     }
@@ -38,7 +39,7 @@ where
     #[cfg(any(
         feature = "sign",
         feature = "sigstore-trust-root",
-        feature = "rekor",
+        feature = "rekor-models",
         feature = "verify"
     ))]
     fn verify_inclusion(
@@ -94,7 +95,7 @@ where
     #[cfg(any(
         feature = "sign",
         feature = "sigstore-trust-root",
-        feature = "rekor",
+        feature = "rekor-models",
         feature = "verify"
     ))]
     fn verify_consistency(

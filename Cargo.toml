@@ -12,11 +12,24 @@ version = "0.14.0"
 all-features = true
 
 [features]
-default = ["full", "native-tls"]
+default = ["crypto", "full", "native-tls"]
+
+# Keep the upstream AWS-LC implementation for normal clients. Model/proof-only
+# consumers can instead supply a SignatureVerifier without linking a backend.
+crypto = [
+    "dep:aws-lc-rs",
+    "dep:const-oid",
+    "dep:crypto_secretbox",
+    "dep:pkcs8",
+    "dep:rustls-webpki",
+    "dep:scrypt",
+    "dep:x509-cert",
+    "dep:zeroize",
+]
 
 bundle = ["sign", "verify"]
 cached-client = ["dep:cached"]
-cert = ["rustls-webpki/aws-lc-rs"]
+cert = ["crypto", "rustls-webpki/aws-lc-rs"]
 cosign = [
     "cert",
     "dep:async-trait",
@@ -28,6 +41,7 @@ cosign = [
     "verify",
 ]
 fulcio = [
+    "crypto",
     "dep:reqwest",
     "dep:serde_repr",
     "dep:serde_with",
@@ -47,13 +61,11 @@ mock-client = ["dep:async-trait", "dep:oci-client"]
 native-tls = ["oci-client?/native-tls", "reqwest?/native-tls"]
 oauth = ["dep:openidconnect", "dep:reqwest", "reqwest?/blocking"]
 registry = ["dep:async-trait", "dep:oci-client", "dep:serde_json_canonicalizer"]
-rekor = [
-    "dep:hex",
-    "dep:hex-literal",
-    "dep:reqwest",
-    "dep:serde_json_canonicalizer",
-    "reqwest?/query",
-]
+# Preserve upstream's HTTP-client feature; models and proof verification do not
+# need HTTP, a browser, or a particular cryptographic provider.
+rekor = ["crypto", "rekor-apis"]
+rekor-apis = ["dep:reqwest", "rekor-models", "reqwest?/query"]
+rekor-models = ["dep:hex", "dep:hex-literal", "dep:serde_json_canonicalizer"]
 rustls-tls = ["oci-client?/rustls-tls", "reqwest?/rustls"]
 sign = [
     "cert",
@@ -99,8 +111,10 @@ chrono = { version = "0.4", default-features = false, features = [
     "now",
     "serde",
 ] }
-const-oid = { version = "0.9", default-features = false, features = ["db"] }
-crypto_secretbox = { version = "0.1", default-features = false, features = [
+const-oid = { optional = true, version = "0.9", default-features = false, features = [
+    "db",
+] }
+crypto_secretbox = { optional = true, version = "0.1", default-features = false, features = [
     "alloc",
     "salsa20",
 ] }
@@ -127,7 +141,7 @@ p256 = { version = "0.13", default-features = false, features = [
     "std",
 ], optional = true }
 pem = { version = "3.0", default-features = false, features = ["serde", "std"] }
-pkcs8 = { version = "0.10", default-features = false, features = [
+pkcs8 = { optional = true, version = "0.10", default-features = false, features = [
     "encryption",
     "pem",
     "pkcs5",
@@ -139,10 +153,12 @@ reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "multipart",
 ], optional = true }
-rustls-webpki = { version = "0.103", default-features = false, features = [
+rustls-webpki = { optional = true, version = "0.103", default-features = false, features = [
     "std",
 ] }
-scrypt = { version = "0.12", default-features = false, features = ["phc"] }
+scrypt = { optional = true, version = "0.12", default-features = false, features = [
+    "phc",
+] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 serde_json_canonicalizer = { version = "0.3", optional = true }
@@ -164,13 +180,13 @@ tough = { version = "0.22", default-features = false, optional = true }
 tracing = { version = "0.1", default-features = false }
 url = { version = "2.5", default-features = false }
 webbrowser = { version = "1.0", default-features = false, optional = true }
-x509-cert = { version = "0.2", default-features = false, features = [
+x509-cert = { optional = true, version = "0.2", default-features = false, features = [
     "builder",
     "pem",
     "sct",
     "std",
 ] }
-zeroize = { version = "1.8", default-features = false }
+zeroize = { optional = true, version = "1.8", default-features = false }
 
 [dev-dependencies]
 anyhow = { version = "1.0", default-features = false, features = [
@@ -209,10 +225,10 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 
 [target.'cfg(not(target_arch = "powerpc64"))'.dependencies]
-aws-lc-rs = { version = "1" }
+aws-lc-rs = { version = "1", optional = true }
 
 [target.'cfg(target_arch = "powerpc64")'.dependencies]
-aws-lc-rs = { version = "1", features = ["bindgen"] }
+aws-lc-rs = { version = "1", optional = true, features = ["bindgen"] }
 
 # cosign example mappings
 

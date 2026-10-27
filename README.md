@@ -73,3 +73,37 @@ for more information.
 
 Should you discover any security issues, please refer to sigstores [security
 process](https://github.com/sigstore/community/security/policy)
+
+## Network-free Rekor models (Decentriq fork)
+
+This branch is based on the stable upstream **v0.14.0** release. Use
+`default-features = false, features = ["rekor-models"]` for Rekor data models,
+checkpoint parsing and Merkle-proof verification without HTTP/browser clients
+or AWS-LC. The public proof methods require a `crypto::SignatureVerifier` supplied
+by the caller; they do not skip signature verification. The caller must obtain
+its verification key through a trusted channel and enforce the expected algorithm.
+
+The normal `rekor` feature still enables the HTTP APIs and upstream crypto
+implementation. `rekor-apis` enables just the HTTP/model layer. `crypto` retains
+the upstream AWS-LC implementation and is enabled by default and by features
+that require it (including `cert` and `fulcio`). Disabling default features is
+therefore essential for the network-free configuration.
+
+The former fork's network split and public Merkle helpers are carried forward;
+its optional browser dependency, Merkle algorithms and 64-bit tree sizes are
+already present upstream. Public checkpoint helpers now use upstream's names:
+`SignedCheckpoint` is the signed envelope and `Checkpoint` is its note.
+
+Validation of this configuration:
+
+```sh
+cargo test --lib --test rekor_models --no-default-features --features rekor-models
+cargo test --lib --no-default-features --features rekor-models,crypto
+cargo check --lib --no-default-features --features rekor-models --target x86_64-fortanix-unknown-sgx
+cargo check --lib --no-default-features --features rekor-models --target wasm32-unknown-unknown
+```
+
+This is a portability/API split, not a claim that every optional upstream
+feature is free of advisories. In particular, enabling `sign` still selects the
+RustCrypto dependencies of the upstream v0.14.0 release. They are not in the
+model-only graph.

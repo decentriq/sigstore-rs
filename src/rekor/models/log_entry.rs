@@ -17,7 +17,7 @@ use crate::errors::SigstoreError;
 use crate::rekor::TreeSize;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STD_ENGINE};
 
-use crate::crypto::CosignVerificationKey;
+use crate::crypto::SignatureVerifier;
 use crate::crypto::merkle::hex_to_hash_output;
 use crate::errors::SigstoreError::UnexpectedError;
 use crate::rekor::models::InclusionProof;
@@ -141,7 +141,10 @@ impl LogEntry {
     ///         .expect("failed to verify inclusion");
     /// }
     /// ```
-    pub fn verify_inclusion(&self, rekor_key: &CosignVerificationKey) -> Result<(), SigstoreError> {
+    pub fn verify_inclusion(
+        &self,
+        rekor_key: &(impl SignatureVerifier + ?Sized),
+    ) -> Result<(), SigstoreError> {
         let api_proof = self
             .verification
             .inclusion_proof
@@ -209,7 +212,7 @@ impl TryFrom<&RekorInclusionProof> for InclusionProof {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "crypto"))]
 mod tests {
     use std::str::FromStr;
 

@@ -102,3 +102,35 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - run: |
           cargo clippy --workspace -- -D warnings
+
+  netless:
+    name: Network-free Rekor (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-fortanix-unknown-sgx
+          - wasm32-unknown-unknown
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Check models without a network stack or crypto provider
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cargo check --lib --no-default-features --features rekor-models --target "$TARGET"
+          cargo tree --no-default-features --features rekor-models --target "$TARGET" -e normal --prefix none > netless-dependencies.txt
+          if grep -E '^(aws-lc-(rs|sys)|reqwest|hyper|mio|webbrowser|crypto-bigint) v' netless-dependencies.txt; then
+            echo "Unexpected dependency in the network-free model graph"
+            exit 1
+          fi
+      - name: Test models and public proof helpers
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo test --lib --test rekor_models --no-default-features --features rekor-models

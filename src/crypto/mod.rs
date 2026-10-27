@@ -17,9 +17,11 @@
 
 use crate::errors::*;
 
+#[cfg(feature = "crypto")]
 pub use signing_key::SigStoreSigner;
+#[cfg(feature = "crypto")]
 pub use verification_key::CosignVerificationKey;
-pub(crate) mod merkle;
+pub mod merkle;
 
 /// Different digital signature algorithms.
 /// * `RSA_PSS_SHA256`: RSA PSS padding using SHA-256 for RSA signatures.
@@ -32,6 +34,7 @@ pub(crate) mod merkle;
 /// * `ECDSA_P521_SHA512_ASN1`: ASN.1 DER-encoded ECDSA signatures using P-521
 ///   and SHA-512.
 /// * `ED25519`: Ed25519 signature using curve edwards25519.
+#[cfg(feature = "crypto")]
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SigningScheme {
@@ -43,6 +46,7 @@ pub enum SigningScheme {
     ED25519,
 }
 
+#[cfg(feature = "crypto")]
 impl std::fmt::Display for SigningScheme {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -56,6 +60,7 @@ impl std::fmt::Display for SigningScheme {
     }
 }
 
+#[cfg(feature = "crypto")]
 impl TryFrom<&str> for SigningScheme {
     type Error = String;
 
@@ -72,6 +77,7 @@ impl TryFrom<&str> for SigningScheme {
     }
 }
 
+#[cfg(feature = "crypto")]
 impl SigningScheme {
     /// Create a key-pair due to the given signing scheme.
     pub fn create_signer(&self) -> Result<SigStoreSigner> {
@@ -113,6 +119,7 @@ impl SigningScheme {
 /// Sigstore relies on NIST P-256
 /// NIST P-256 is a Weierstrass curve specified in [FIPS 186-4: Digital Signature Standard (DSS)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-4.pdf).
 /// Also known as prime256v1 (ANSI X9.62) and secp256r1 (SECG)
+#[cfg(feature = "crypto")]
 impl Default for SigningScheme {
     fn default() -> Self {
         SigningScheme::ECDSA_P256_SHA256_ASN1
@@ -127,6 +134,23 @@ pub enum Signature<'a> {
     Base64Encoded(&'a [u8]),
 }
 
+/// Verifies a signature using an explicitly trusted key and its expected algorithm.
+///
+/// Model-only consumers implement this with their platform's cryptographic
+/// provider. Implementations must return an error for malformed signatures,
+/// invalid keys, or a signature that does not authenticate the supplied message.
+/// This trait does not establish trust in the key itself.
+pub trait SignatureVerifier {
+    fn verify_signature(&self, signature: Signature<'_>, message: &[u8]) -> Result<()>;
+}
+
+#[cfg(feature = "crypto")]
+impl SignatureVerifier for CosignVerificationKey {
+    fn verify_signature(&self, signature: Signature<'_>, message: &[u8]) -> Result<()> {
+        CosignVerificationKey::verify_signature(self, signature, message)
+    }
+}
+
 #[cfg(feature = "cert")]
 pub(crate) mod certificate;
 #[cfg(feature = "cert")]
@@ -136,20 +160,23 @@ pub(crate) use certificate_pool::CertificatePool;
 #[cfg(feature = "cert")]
 pub(crate) mod keyring;
 
+#[cfg(feature = "crypto")]
 pub mod verification_key;
 
+#[cfg(feature = "crypto")]
 use self::signing_key::{
     ecdsa::{ECDSAKeys, EllipticCurve, ec::EcdsaSigner},
     ed25519::{Ed25519Keys, Ed25519Signer},
     rsa::{DEFAULT_KEY_SIZE, DigestAlgorithm, PaddingScheme, RSASigner, keypair::RSAKeys},
 };
 
+#[cfg(feature = "crypto")]
 pub mod signing_key;
 
 #[cfg(any(feature = "sign", feature = "verify"))]
 pub(crate) mod transparency;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "crypto"))]
 pub(crate) mod tests {
     use chrono::{DateTime, TimeDelta, Utc};
     use rcgen::{

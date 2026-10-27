@@ -1,5 +1,5 @@
 use crate::crypto::merkle::{MerkleProofVerifier, Rfc6269Default};
-use crate::crypto::{CosignVerificationKey, Signature};
+use crate::crypto::{Signature, SignatureVerifier};
 use crate::errors::SigstoreError;
 use crate::errors::SigstoreError::ConsistencyProofError;
 use crate::rekor::models::checkpoint::ParseCheckpointError::*;
@@ -70,7 +70,7 @@ pub enum ParseCheckpointError {
 impl SignedCheckpoint {
     // decode from format used by Rekor for envelopes (signed notes)
     // See https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#signed-envelope
-    pub(crate) fn decode(s: &str) -> Result<Self, ParseCheckpointError> {
+    pub fn decode(s: &str) -> Result<Self, ParseCheckpointError> {
         // refer to: https://github.com/sigstore/rekor/blob/d702f84e6b8b127662c5e717ee550de1242a6aec/pkg/util/signed_note.go
 
         let checkpoint = s.trim_start_matches('"').trim_end_matches('"');
@@ -92,7 +92,7 @@ impl SignedCheckpoint {
 
     // encode into format used by Rekor for envelopes (signed notes)
     // See https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#signed-envelope
-    pub(crate) fn encode(&self) -> String {
+    pub fn encode(&self) -> String {
         let note = self.note.marshal() + "\n";
         let empty_line = "\n";
         let signatures = self
@@ -106,7 +106,10 @@ impl SignedCheckpoint {
 
     /// verify_signature checks that at least one of the signatures can be verified by the log
     /// with the public key `rekor_key`
-    pub fn verify_signature(&self, rekor_key: &CosignVerificationKey) -> Result<(), SigstoreError> {
+    pub fn verify_signature(
+        &self,
+        rekor_key: &(impl SignatureVerifier + ?Sized),
+    ) -> Result<(), SigstoreError> {
         for sig in &self.signatures {
             if rekor_key
                 .verify_signature(Signature::Raw(&sig.raw), self.note.marshal().as_bytes())
@@ -147,7 +150,7 @@ impl SignedCheckpoint {
 impl Checkpoint {
     /// marshals the note
     /// See https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#checkpoint-body
-    fn marshal(&self) -> String {
+    pub fn marshal(&self) -> String {
         let hash_b64 = BASE64_STANDARD.encode(self.hash);
         let other_content: String = self.other_content.iter().fold(String::new(), |mut acc, c| {
             writeln!(acc, "{c}").expect("failed to write to string");
@@ -161,7 +164,7 @@ impl Checkpoint {
 
     /// unmarshal parses the common formatted note data and stores the result in a
     /// CheckpointNote
-    fn unmarshal(s: &str) -> Result<Self, ParseCheckpointError> {
+    pub fn unmarshal(s: &str) -> Result<Self, ParseCheckpointError> {
         // See https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#checkpoint-body
         // The note is in the form:
         // <Origin string>

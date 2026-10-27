@@ -73,7 +73,7 @@ pub enum SigstoreError {
     #[cfg(any(
         feature = "sign",
         feature = "sigstore-trust-root",
-        feature = "rekor",
+        feature = "rekor-models",
         feature = "verify"
     ))]
     #[error(transparent)]
@@ -263,9 +263,11 @@ pub enum SigstoreError {
     #[error("Certificate parsing error: {0}")]
     CertificateParsingError(String),
 
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
     ScryptKDFInvalidParamsError(#[from] scrypt::errors::InvalidParams),
 
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
     ScryptKDFInvalidOutputLenError(#[from] scrypt::errors::InvalidOutputLen),
 
@@ -281,15 +283,18 @@ pub enum SigstoreError {
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
 
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
     WebPKIError(#[from] webpki::Error),
 
     #[error("Failed to parse the key: {0}")]
     KeyParseError(String),
 
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
     X509ParseError(#[from] x509_cert::der::Error),
 
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
     X509BuilderError(#[from] x509_cert::builder::Error),
 }

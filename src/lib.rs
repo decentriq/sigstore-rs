@@ -264,8 +264,8 @@ pub mod oauth;
 #[cfg(feature = "registry")]
 pub mod registry;
 
-#[cfg_attr(docsrs, doc(cfg(feature = "rekor")))]
-#[cfg(feature = "rekor")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rekor-models")))]
+#[cfg(feature = "rekor-models")]
 pub mod rekor;
 
 #[cfg_attr(docsrs, doc(cfg(any(feature = "sign", feature = "verify"))))]
