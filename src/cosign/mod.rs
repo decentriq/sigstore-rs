@@ -36,7 +36,7 @@
 //! In case you want to mock sigstore interactions inside of your own code, you
 //! can implement the [`CosignCapabilities`] trait inside of your test suite.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use tracing::warn;
@@ -46,13 +46,13 @@ use crate::registry::{Auth, PushResponse};
 
 use crate::crypto::{CosignVerificationKey, Signature};
 use crate::errors::SigstoreError;
-use base64::{engine::general_purpose::STANDARD as BASE64_STD_ENGINE, Engine as _};
 use pkcs8::der::Decode;
-use std::convert::TryFrom;
 use x509_cert::Certificate;
 
 pub mod bundle;
+pub mod bundle_content;
 pub(crate) mod constants;
+pub(crate) mod intoto;
 pub mod signature_layers;
 pub use signature_layers::SignatureLayer;
 
@@ -72,8 +72,7 @@ pub use payload::simple_signing;
 
 pub mod constraint;
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 /// Cosign Abilities that have to be implemented by a
 /// Cosign client
 pub trait CosignCapabilities {
@@ -85,10 +84,17 @@ pub trait CosignCapabilities {
         auth: &Auth,
     ) -> Result<(OciReference, String)>;
 
-    /// Returns the list of [`SignatureLayer`](crate::cosign::signature_layers::SignatureLayer)
-    /// objects that are associated with the given signature object.
+    /// Returns the list of [`SignatureLayer`]
+    /// objects associated with the given image, checking both the cosign
+    /// SimpleSigning (`.sig` tag) format and the Sigstore Bundle (OCI referrers)
+    /// format transparently.
     ///
-    /// Each layer is verified, to ensure it contains legitimate data.
+    /// Triangulation is performed internally: the caller only needs to supply
+    /// the original image reference.  Both signature sources are attempted;
+    /// individual failures are logged as warnings.  Returns an empty vector
+    /// when no layers are found from either source.
+    ///
+    /// Each layer is verified to ensure it contains legitimate data.
     ///
     /// ## Layers with embedded certificate
     ///
@@ -102,12 +108,13 @@ pub trait CosignCapabilities {
     /// must be satisfied:
     ///
     /// * The [`sigstore::cosign::Client`](crate::cosign::client::Client) must
-    ///   have been created with Rekor integration enabled (see
-    ///   [`sigstore::cosign::ClientBuilder::with_rekor_pub_key`](crate::cosign::ClientBuilder::with_rekor_pub_key))
+    ///   have been created with Rekor integration enabled (see [`crate::trust::sigstore::ManualTrustRoot`])
     /// * The [`sigstore::cosign::Client`](crate::cosign::client::Client) must
-    ///   have been created with Fulcio integration enabled (see
-    ///   [`sigstore::cosign::ClientBuilder::with_fulcio_certs`](crate::cosign::ClientBuilder::with_fulcio_certs))
+    ///   have been created with Fulcio integration enabled (see [`crate::trust::sigstore::ManualTrustRoot`])
     /// * The layer must include a bundle produced by Rekor
+    ///
+    /// > Note well: the [`trust::sigstore`](crate::trust::sigstore) module provides helper structs and methods
+    /// > to obtain this data from the official TUF repository of the Sigstore project.
     ///
     /// When the embedded certificate cannot be verified, [`SignatureLayer::certificate_signature`]
     /// is going to be `None`.
@@ -117,18 +124,25 @@ pub trait CosignCapabilities {
     /// These returned objects can then be verified against
     /// [`VerificationConstraints`](crate::cosign::verification_constraint::VerificationConstraint)
     /// using the [`verify_constraints`] function.
+    ///
+    /// ## Image reference formats
+    ///
+    /// `source_image` may be either a tag reference (e.g. `registry/repo:tag`)
+    /// or a digest reference (e.g. `registry/repo@sha256:...`). Triangulation
+    /// is performed internally by issuing a `HEAD` request against the registry,
+    /// which works for both forms: digest references simply cause the registry to
+    /// echo back the same digest in the response header.
     async fn trusted_signature_layers(
         &mut self,
         auth: &Auth,
-        source_image_digest: &str,
-        cosign_image: &OciReference,
+        source_image: &OciReference,
     ) -> Result<Vec<SignatureLayer>>;
 
     /// Push [`SignatureLayer`] objects to the registry. This function will do
     /// the following steps:
-    /// * Generate a series of [`oci_distribution::client::ImageLayer`]s due to
+    /// * Generate a series of [`oci_client::client::ImageLayer`]s due to
     /// the given [`Vec<SignatureLayer>`].
-    /// * Generate a `OciImageManifest` of [`oci_distribution::manifest::OciManifest`]
+    /// * Generate a `OciImageManifest` of [`oci_client::manifest::OciManifest`]
     /// due to the given `source_image_digest` and `signature_layers`. It supports
     /// to be extended when newly published
     /// [Referrers API of OCI Registry v1.1.0](https://github.com/opencontainers/distribution-spec/blob/v1.1.0-rc1/spec.md#listing-referrers),
@@ -146,7 +160,7 @@ pub trait CosignCapabilities {
     /// - `signature_layers`: [`SignatureLayer`] objects containing signature information
     async fn push_signature(
         &mut self,
-        annotations: Option<HashMap<String, String>>,
+        annotations: Option<BTreeMap<String, String>>,
         auth: &Auth,
         target_reference: &OciReference,
         signature_layers: Vec<SignatureLayer>,
@@ -155,16 +169,16 @@ pub trait CosignCapabilities {
     /// Verifies the signature produced by cosign when signing the given blob via the `cosign sign-blob` command
     ///
     /// The parameters:
-    /// * `cert`: a PEM encoded x509 certificate that contains the public key used to verify the signature
+    /// * `cert`: a PEM encoded x509 certificate that contains the public key used to verify the signature.
+    ///   Note that cert is not double-base64-encoded like the output of sigstore/cosign is.
     /// * `signature`: the base64 encoded signature of the blob that has to be verified
     /// * `blob`: the contents of the blob
     ///
     /// This function returns `Ok())` when the given signature has been verified, otherwise returns an `Err`.
     fn verify_blob(cert: &str, signature: &str, blob: &[u8]) -> Result<()> {
-        let cert = BASE64_STD_ENGINE.decode(cert)?;
         let pem = pem::parse(cert)?;
         let cert = Certificate::from_der(pem.contents()).map_err(|e| {
-            SigstoreError::PKCS8SpkiError(format!("parse der into cert failed: {e}"))
+            SigstoreError::CertificateParsingError(format!("parse der into cert failed: {e}"))
         })?;
         let spki = cert.tbs_certificate.subject_public_key_info;
         let ver_key = CosignVerificationKey::try_from(&spki)?;
@@ -199,7 +213,7 @@ pub trait CosignCapabilities {
 /// verification.
 ///
 /// Returns a `Result` with either `Ok()` for passed verification or
-/// [`SigstoreVerifyConstraintsError`](crate::errors::SigstoreVerifyConstraintsError),
+/// [`SigstoreVerifyConstraintsError`]
 /// which contains a vector of references to unsatisfied constraints.
 ///
 /// See the documentation of the [`cosign::verification_constraint`](crate::cosign::verification_constraint) module for more
@@ -249,10 +263,10 @@ where
 /// passes applying constraints process.
 ///
 /// Returns a `Result` with either `Ok()` for success or
-/// [`SigstoreApplicationConstraintsError`](crate::errors::SigstoreApplicationConstraintsError),
+/// [`SigstoreApplicationConstraintsError`]
 /// which contains a vector of references to unapplied constraints.
 ///
-/// See the documentation of the [`cosign::sign_constraint`](crate::cosign::sign_constraint) module for more
+/// See the documentation of the [`cosign::constraint`](crate::cosign::constraint) module for more
 /// details about how to define constraints.
 pub fn apply_constraints<'a, 'b, I>(
     signature_layer: &'a mut SignatureLayer,
@@ -282,31 +296,170 @@ where
 
 #[cfg(test)]
 mod tests {
+    use pki_types::CertificateDer;
     use serde_json::json;
-    use std::collections::HashMap;
 
     use super::constraint::{AnnotationMarker, PrivateKeySigner};
+    use super::verification_constraint::cert_subject_email_verifier::StringVerifier;
     use super::*;
-    use crate::cosign::signature_layers::tests::build_correct_signature_layer_with_certificate;
     use crate::cosign::signature_layers::CertificateSubject;
+    use crate::cosign::signature_layers::tests::build_correct_signature_layer_with_certificate;
     use crate::cosign::simple_signing::Optional;
     use crate::cosign::verification_constraint::{
         AnnotationVerifier, CertSubjectEmailVerifier, VerificationConstraintVec,
     };
+    use crate::crypto::SigningScheme;
     use crate::crypto::certificate_pool::CertificatePool;
-    use crate::crypto::{CosignVerificationKey, SigningScheme};
 
     #[cfg(feature = "test-registry")]
-    use testcontainers::{
-        clients,
-        core::WaitFor,
-        images::{self, generic::GenericImage},
-    };
+    use testcontainers::{core::WaitFor, runners::AsyncRunner};
+
+    #[cfg(feature = "test-remote-registry")]
+    mod remote_registry {
+        use crate::cosign::verification_constraint::CertSubjectUrlVerifier;
+        use crate::cosign::verification_constraint::VerificationConstraintVec;
+        use crate::cosign::{Client, ClientBuilder, CosignCapabilities, verify_constraints};
+        use crate::registry::Auth;
+        use crate::trust::sigstore::SigstoreTrustRoot;
+
+        // These tests verify against real images hosted on ghcr.io that cover all
+        // three signature scenarios supported by `trusted_signature_layers`:
+        //
+        //   - SimpleSigning only  (.sig tag, no OCI referrer bundle)
+        //   - Sigstore Bundle only (OCI referrers, no .sig tag)
+        //   - Both formats present (layers from both paths must be returned)
+        //
+        // Run with:  cargo test --features test-remote-registry
+
+        const KUBEWARDEN_CONTROLLER_IMAGE: &str = "ghcr.io/kubewarden/kubewarden-controller";
+        const GITHUB_ACTIONS_OIDC_ISSUER: &str = "https://token.actions.githubusercontent.com";
+
+        async fn build_remote_cosign_client() -> Client {
+            let trust_root = SigstoreTrustRoot::new(None)
+                .await
+                .expect("failed to fetch Sigstore trust root");
+            ClientBuilder::default()
+                .with_trust_repository(&trust_root)
+                .expect("failed to configure trust repository")
+                .build()
+                .expect("failed to build cosign client")
+        }
+
+        /// Verify an image signed **only** with a Sigstore Bundle (OCI referrers).
+        /// No SimpleSigning `.sig` tag exists for this image, so all returned layers
+        /// must come from the Sigstore Bundle path.
+        #[tokio::test]
+        async fn verify_sigstore_bundle_only() {
+            let mut client = build_remote_cosign_client().await;
+
+            let image = format!("{KUBEWARDEN_CONTROLLER_IMAGE}:v1.30.0-rc1")
+                .parse()
+                .expect("failed to parse image reference");
+
+            let layers = client
+                .trusted_signature_layers(&Auth::Anonymous, &image)
+                .await
+                .expect("failed to get trusted signature layers");
+
+            assert_eq!(
+                layers.len(),
+                1,
+                "expected exactly 1 signature layer from Sigstore Bundle path"
+            );
+            assert!(
+                layers[0].certificate_signature.is_some(),
+                "expected certificate_signature to be present (Fulcio validation passed)"
+            );
+
+            let vc = CertSubjectUrlVerifier {
+                url: "https://github.com/kubewarden/kubewarden-controller/.github/workflows/release.yml@refs/tags/v1.30.0-rc1".to_string(),
+                issuer: GITHUB_ACTIONS_OIDC_ISSUER.to_string(),
+            };
+            let constraints: VerificationConstraintVec = vec![Box::new(vc)];
+            verify_constraints(&layers, constraints.iter())
+                .expect("verification constraints should be satisfied");
+        }
+
+        /// Verify an image signed **only** with SimpleSigning (`.sig` tag).
+        /// No OCI referrer bundle exists for this image, so all returned layers
+        /// must come from the SimpleSigning path.
+        #[tokio::test]
+        async fn verify_simple_signing_only() {
+            let mut client = build_remote_cosign_client().await;
+
+            let image = format!("{KUBEWARDEN_CONTROLLER_IMAGE}:v1.29.0-rc1")
+                .parse()
+                .expect("failed to parse image reference");
+
+            let layers = client
+                .trusted_signature_layers(&Auth::Anonymous, &image)
+                .await
+                .expect("failed to get trusted signature layers");
+
+            assert_eq!(
+                layers.len(),
+                1,
+                "expected exactly 1 signature layer from SimpleSigning path"
+            );
+            assert!(
+                layers[0].certificate_signature.is_some(),
+                "expected certificate_signature to be present (Fulcio validation passed)"
+            );
+
+            let vc = CertSubjectUrlVerifier {
+                url: "https://github.com/kubewarden/kubewarden-controller/.github/workflows/release.yml@refs/tags/v1.29.0-rc1".to_string(),
+                issuer: GITHUB_ACTIONS_OIDC_ISSUER.to_string(),
+            };
+            let constraints: VerificationConstraintVec = vec![Box::new(vc)];
+            verify_constraints(&layers, constraints.iter())
+                .expect("verification constraints should be satisfied");
+        }
+
+        /// Verify an image signed with **both** SimpleSigning (`.sig` tag) and
+        /// Sigstore Bundle (OCI referrers). `trusted_signature_layers` must return
+        /// exactly 2 layers — one from each path.
+        #[tokio::test]
+        async fn verify_both_simple_signing_and_sigstore_bundle() {
+            let mut client = build_remote_cosign_client().await;
+
+            let image = format!("{KUBEWARDEN_CONTROLLER_IMAGE}:v1.31.0-rc1")
+                .parse()
+                .expect("failed to parse image reference");
+
+            let layers = client
+                .trusted_signature_layers(&Auth::Anonymous, &image)
+                .await
+                .expect("failed to get trusted signature layers");
+
+            assert_eq!(
+                layers.len(),
+                2,
+                "expected exactly 2 signature layers (one from SimpleSigning, one from Sigstore Bundle)"
+            );
+            for layer in &layers {
+                assert!(
+                    layer.certificate_signature.is_some(),
+                    "expected certificate_signature to be present on all layers (Fulcio validation passed)"
+                );
+            }
+
+            let vc = CertSubjectUrlVerifier {
+                url: "https://github.com/kubewarden/kubewarden-controller/.github/workflows/release.yml@refs/tags/v1.31.0-rc1".to_string(),
+                issuer: GITHUB_ACTIONS_OIDC_ISSUER.to_string(),
+            };
+            let constraints: VerificationConstraintVec = vec![Box::new(vc)];
+            verify_constraints(&layers, constraints.iter())
+                .expect("verification constraints should be satisfied");
+        }
+    }
 
     pub(crate) const REKOR_PUB_KEY: &str = r#"-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr
 kBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==
 -----END PUBLIC KEY-----"#;
+
+    pub(crate) const REKOR_PUB_KEY_ID: &str =
+        "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d";
 
     const FULCIO_CRT_1_PEM: &str = r#"-----BEGIN CERTIFICATE-----
 MIIB+DCCAX6gAwIBAgITNVkDZoCiofPDsy7dfm6geLbuhzAKBggqhkjOPQQDAzAq
@@ -340,22 +493,21 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
     const SIGNED_IMAGE: &str = "busybox:1.34";
 
     pub(crate) fn get_fulcio_cert_pool() -> CertificatePool {
-        let certificates = vec![
-            crate::registry::Certificate {
-                encoding: crate::registry::CertificateEncoding::Pem,
-                data: FULCIO_CRT_1_PEM.as_bytes().to_vec(),
-            },
-            crate::registry::Certificate {
-                encoding: crate::registry::CertificateEncoding::Pem,
-                data: FULCIO_CRT_2_PEM.as_bytes().to_vec(),
-            },
-        ];
-        CertificatePool::from_certificates(&certificates).unwrap()
+        fn pem_to_der(input: &str) -> CertificateDer<'_> {
+            let pem_cert = pem::parse(input).unwrap();
+            assert_eq!(pem_cert.tag(), "CERTIFICATE");
+            CertificateDer::from(pem_cert.into_contents())
+        }
+        let certificates = vec![pem_to_der(FULCIO_CRT_1_PEM), pem_to_der(FULCIO_CRT_2_PEM)];
+
+        CertificatePool::from_certificates(certificates, []).unwrap()
     }
 
-    pub(crate) fn get_rekor_public_key() -> CosignVerificationKey {
-        CosignVerificationKey::from_pem(REKOR_PUB_KEY.as_bytes(), &SigningScheme::default())
-            .expect("Cannot create test REKOR_PUB_KEY")
+    pub(crate) fn get_rekor_public_key() -> (String, CosignVerificationKey) {
+        let key =
+            CosignVerificationKey::from_pem(REKOR_PUB_KEY.as_bytes(), &SigningScheme::default())
+                .expect("Cannot create test REKOR_PUB_KEY");
+        (REKOR_PUB_KEY_ID.to_string(), key)
     }
 
     #[test]
@@ -363,7 +515,7 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
         let email = "alice@example.com".to_string();
         let issuer = "an issuer".to_string();
 
-        let mut annotations: HashMap<String, String> = HashMap::new();
+        let mut annotations: BTreeMap<String, String> = BTreeMap::new();
         annotations.insert("key1".into(), "value1".into());
         annotations.insert("key2".into(), "value2".into());
 
@@ -376,7 +528,7 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
             cert_signature.subject = cert_subj;
             sl.certificate_signature = Some(cert_signature);
 
-            let mut extra: HashMap<String, serde_json::Value> = annotations
+            let mut extra: BTreeMap<String, serde_json::Value> = annotations
                 .iter()
                 .map(|(k, v)| (k.clone(), json!(v)))
                 .collect();
@@ -396,13 +548,13 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
 
         let mut constraints: VerificationConstraintVec = Vec::new();
         let vc = CertSubjectEmailVerifier {
-            email: email.clone(),
-            issuer: Some(issuer),
+            email: StringVerifier::ExactMatch(email.clone()),
+            issuer: Some(StringVerifier::ExactMatch(issuer)),
         };
         constraints.push(Box::new(vc));
 
         let vc = CertSubjectEmailVerifier {
-            email,
+            email: StringVerifier::ExactMatch(email),
             issuer: None,
         };
         constraints.push(Box::new(vc));
@@ -428,7 +580,7 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
             cert_signature.subject = cert_subj;
             sl.certificate_signature = Some(cert_signature);
 
-            let mut extra: HashMap<String, serde_json::Value> = HashMap::new();
+            let mut extra: BTreeMap<String, serde_json::Value> = BTreeMap::new();
             extra.insert("something extra".into(), json!("value extra"));
 
             let mut simple_signing = sl.simple_signing;
@@ -445,13 +597,13 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
 
         let mut constraints: VerificationConstraintVec = Vec::new();
         let vc = CertSubjectEmailVerifier {
-            email: wrong_email.clone(),
-            issuer: Some(issuer), // correct issuer
+            email: StringVerifier::ExactMatch(wrong_email.clone()),
+            issuer: Some(StringVerifier::ExactMatch(issuer)), // correct issuer
         };
         constraints.push(Box::new(vc));
 
         let vc = CertSubjectEmailVerifier {
-            email: wrong_email,
+            email: StringVerifier::ExactMatch(wrong_email),
             issuer: None, // missing issuer, more relaxed
         };
         constraints.push(Box::new(vc));
@@ -476,7 +628,7 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
             cert_signature.subject = cert_subj;
             sl.certificate_signature = Some(cert_signature);
 
-            let mut extra: HashMap<String, serde_json::Value> = HashMap::new();
+            let mut extra: BTreeMap<String, serde_json::Value> = BTreeMap::new();
             extra.insert("something extra".into(), json!("value extra"));
 
             let mut simple_signing = sl.simple_signing;
@@ -493,13 +645,13 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
 
         let mut constraints: VerificationConstraintVec = Vec::new();
         let satisfied_constraint = CertSubjectEmailVerifier {
-            email,
-            issuer: Some(issuer),
+            email: StringVerifier::ExactMatch(email),
+            issuer: Some(StringVerifier::ExactMatch(issuer)),
         };
         constraints.push(Box::new(satisfied_constraint));
 
         let unsatisfied_constraint = CertSubjectEmailVerifier {
-            email: email_incorrect,
+            email: StringVerifier::ExactMatch(email_incorrect),
             issuer: None,
         };
         constraints.push(Box::new(unsatisfied_constraint));
@@ -562,21 +714,21 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
     #[cfg(feature = "test-registry")]
     #[rstest::rstest]
     #[case(SigningScheme::RSA_PSS_SHA256(2048))]
-    #[case(SigningScheme::RSA_PSS_SHA384(2048))]
-    #[case(SigningScheme::RSA_PSS_SHA512(2048))]
     #[case(SigningScheme::RSA_PKCS1_SHA256(2048))]
-    #[case(SigningScheme::RSA_PKCS1_SHA384(2048))]
-    #[case(SigningScheme::RSA_PKCS1_SHA512(2048))]
     #[case(SigningScheme::ECDSA_P256_SHA256_ASN1)]
     #[case(SigningScheme::ECDSA_P384_SHA384_ASN1)]
     #[case(SigningScheme::ED25519)]
     #[tokio::test]
     #[serial_test::serial]
     async fn sign_verify_image(#[case] signing_scheme: SigningScheme) {
-        let docker = clients::Cli::default();
-        let image = registry_image();
-        let test_container = docker.run(image);
-        let port = test_container.get_host_port_ipv4(5000);
+        let test_container = registry_image()
+            .start()
+            .await
+            .expect("failed to start registry");
+        let port = test_container
+            .get_host_port_ipv4(5000)
+            .await
+            .expect("failed to get port");
 
         let mut client = ClientBuilder::default()
             .enable_registry_caching()
@@ -630,12 +782,8 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
 
         dbg!("start to verify");
 
-        let (cosign_image, manifest_digest) = client
-            .triangulate(&image_ref, &Auth::Anonymous)
-            .await
-            .expect("triangulate failed");
         let signature_layers = client
-            .trusted_signature_layers(&Auth::Anonymous, &manifest_digest, &cosign_image)
+            .trusted_signature_layers(&Auth::Anonymous, &image_ref)
             .await
             .expect("get trusted signature layers failed");
         let pk_verifier =
@@ -654,8 +802,8 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
             .registry_client
             .pull(
                 &SIGNED_IMAGE.parse().expect("failed to parse image ref"),
-                &oci_distribution::secrets::RegistryAuth::Anonymous,
-                vec![oci_distribution::manifest::IMAGE_DOCKER_LAYER_GZIP_MEDIA_TYPE],
+                &oci_client::secrets::RegistryAuth::Anonymous,
+                vec![oci_client::manifest::IMAGE_DOCKER_LAYER_GZIP_MEDIA_TYPE],
             )
             .await
             .expect("pull test image failed");
@@ -666,7 +814,7 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
                 &image_ref.oci_reference,
                 &data.layers[..],
                 data.config.clone(),
-                &oci_distribution::secrets::RegistryAuth::Anonymous,
+                &oci_client::secrets::RegistryAuth::Anonymous,
                 None,
             )
             .await
@@ -674,8 +822,8 @@ TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
     }
 
     #[cfg(feature = "test-registry")]
-    fn registry_image() -> GenericImage {
-        images::generic::GenericImage::new("docker.io/library/registry", "2")
+    fn registry_image() -> testcontainers::GenericImage {
+        testcontainers::GenericImage::new("docker.io/library/registry", "2")
             .with_wait_for(WaitFor::message_on_stderr("listening on "))
     }
 }

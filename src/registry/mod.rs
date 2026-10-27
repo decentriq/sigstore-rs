@@ -35,55 +35,45 @@ use crate::errors::Result;
 
 use async_trait::async_trait;
 
-/// Workaround to ensure the `Send + Sync` supertraits are
-/// required by ClientCapabilities only when the target
-/// architecture is NOT wasm32.
-///
-/// This intermediate trait has been created to avoid
-/// to define ClientCapabilities twice (one with `#[cfg(target_arch = "wasm32")]`,
-/// the other with `#[cfg(not(target_arch = "wasm32"))]`
-#[cfg(not(target_arch = "wasm32"))]
+use ::oci_client as oci_client_dep;
+
 pub(crate) trait ClientCapabilitiesDeps: Send + Sync {}
 
-/// Workaround to ensure the `Send + Sync` supertraits are
-/// required by ClientCapabilities only when the target
-/// architecture is NOT wasm32.
-///
-/// This intermediate trait has been created to avoid
-/// to define ClientCapabilities twice (one with `#[cfg(target_arch = "wasm32")]`,
-/// the other with `#[cfg(not(target_arch = "wasm32"))]`
-#[cfg(target_arch = "wasm32")]
-pub(crate) trait ClientCapabilitiesDeps {}
-
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 /// Capabilities that are expected to be provided by a registry client
 pub(crate) trait ClientCapabilities: ClientCapabilitiesDeps {
     async fn fetch_manifest_digest(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
+        image: &oci_client_dep::Reference,
+        auth: &oci_client_dep::secrets::RegistryAuth,
     ) -> Result<String>;
 
     async fn pull(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
+        image: &oci_client_dep::Reference,
+        auth: &oci_client_dep::secrets::RegistryAuth,
         accepted_media_types: Vec<&str>,
-    ) -> Result<oci_distribution::client::ImageData>;
+    ) -> Result<oci_client_dep::client::ImageData>;
 
     async fn pull_manifest(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
-    ) -> Result<(oci_distribution::manifest::OciManifest, String)>;
+        image: &oci_client_dep::Reference,
+        auth: &oci_client_dep::secrets::RegistryAuth,
+    ) -> Result<(oci_client_dep::manifest::OciManifest, String)>;
 
     async fn push(
         &mut self,
-        image_ref: &oci_distribution::Reference,
-        layers: &[oci_distribution::client::ImageLayer],
-        config: oci_distribution::client::Config,
-        auth: &oci_distribution::secrets::RegistryAuth,
-        manifest: Option<oci_distribution::manifest::OciImageManifest>,
-    ) -> Result<oci_distribution::client::PushResponse>;
+        image_ref: &oci_client_dep::Reference,
+        layers: &[oci_client_dep::client::ImageLayer],
+        config: oci_client_dep::client::Config,
+        auth: &oci_client_dep::secrets::RegistryAuth,
+        manifest: Option<oci_client_dep::manifest::OciImageManifest>,
+    ) -> Result<oci_client_dep::client::PushResponse>;
+
+    async fn pull_referrers(
+        &mut self,
+        image: &oci_client_dep::Reference,
+        auth: &oci_client_dep::secrets::RegistryAuth,
+        artifact_type: Option<&str>,
+    ) -> Result<oci_client_dep::manifest::OciImageIndex>;
 }

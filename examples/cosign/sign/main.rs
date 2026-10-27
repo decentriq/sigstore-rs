@@ -18,7 +18,6 @@ use sigstore::cosign::constraint::{AnnotationMarker, PrivateKeySigner};
 use sigstore::cosign::{Constraint, CosignCapabilities, SignatureLayer};
 use sigstore::crypto::SigningScheme;
 use sigstore::registry::{Auth, ClientConfig, ClientProtocol, OciReference};
-use std::convert::TryFrom;
 use tracing::{debug, warn};
 use zeroize::Zeroizing;
 
@@ -32,7 +31,7 @@ use std::{collections::HashMap, fs};
 
 extern crate tracing_subscriber;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -154,7 +153,9 @@ fn build_auth(reference: &OciReference) -> Auth {
             Auth::Basic(username, password)
         }
         Ok(DockerCredential::IdentityToken(_)) => {
-            warn!("Cannot use contents of docker config, identity token not supported. Using anonymous auth");
+            warn!(
+                "Cannot use contents of docker config, identity token not supported. Using anonymous auth"
+            );
             Auth::Anonymous
         }
     }

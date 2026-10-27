@@ -18,7 +18,6 @@ use crate::errors::{Result, SigstoreError};
 
 use async_trait::async_trait;
 use cached::proc_macro::cached;
-use olpc_cjson::CanonicalFormatter;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tracing::{debug, error};
@@ -30,21 +29,21 @@ use tracing::{debug, error};
 /// For testing purposes, use instead the client inside of the
 /// `mock_client` module.
 pub(crate) struct OciCachingClient {
-    pub registry_client: oci_distribution::Client,
+    pub registry_client: oci_client::Client,
 }
 
 #[cached(
     time = 60,
     result = true,
-    sync_writes = true,
+    sync_writes = "default",
     key = "String",
     convert = r#"{ format!("{}", image) }"#,
     with_cached_flag = true
 )]
 async fn fetch_manifest_digest_cached(
-    client: &mut oci_distribution::Client,
-    image: &oci_distribution::Reference,
-    auth: &oci_distribution::secrets::RegistryAuth,
+    client: &mut oci_client::Client,
+    image: &oci_client::Reference,
+    auth: &oci_client::secrets::RegistryAuth,
 ) -> Result<cached::Return<String>> {
     client
         .fetch_manifest_digest(image, auth)
@@ -67,8 +66,8 @@ struct PullSettings<'a> {
 
 impl<'a> PullSettings<'a> {
     fn new(
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
         accepted_media_types: Vec<&'a str>,
     ) -> PullSettings<'a> {
         let image_str = image.whole();
@@ -82,15 +81,15 @@ impl<'a> PullSettings<'a> {
     }
 
     #[allow(clippy::unwrap_used)]
-    pub fn image(&self) -> oci_distribution::Reference {
+    pub fn image(&self) -> oci_client::Reference {
         // we can use `unwrap` here, because this will never fail
-        let reference: oci_distribution::Reference = self.image.parse().unwrap();
+        let reference: oci_client::Reference = self.image.parse().unwrap();
         reference
     }
 
-    pub fn auth(&self) -> oci_distribution::secrets::RegistryAuth {
+    pub fn auth(&self) -> oci_client::secrets::RegistryAuth {
         let internal_auth: &super::config::Auth = &self.auth;
-        let a: oci_distribution::secrets::RegistryAuth = internal_auth.into();
+        let a: oci_client::secrets::RegistryAuth = internal_auth.into();
         a
     }
 
@@ -103,12 +102,13 @@ impl<'a> PullSettings<'a> {
     // Because of that the method will return the '0' value when something goes
     // wrong during the serialization operation. This is very unlikely to happen
     pub fn hash(&self) -> String {
-        let mut buf = Vec::new();
-        let mut ser = serde_json::Serializer::with_formatter(&mut buf, CanonicalFormatter::new());
-        if let Err(e) = self.serialize(&mut ser) {
-            error!(err=?e, settings=?self, "Cannot perform canonical serialization");
-            return "0".to_string();
-        }
+        let buf = match serde_json_canonicalizer::to_vec(self) {
+            Ok(vec) => vec,
+            Err(e) => {
+                error!(err=?e, settings=?self, "Cannot perform canonical serialization");
+                return "0".to_string();
+            }
+        };
 
         let mut hasher = Sha256::new();
         hasher.update(&buf);
@@ -128,15 +128,15 @@ impl<'a> PullSettings<'a> {
 #[cached(
     time = 60,
     result = true,
-    sync_writes = true,
+    sync_writes = "default",
     key = "String",
     convert = r#"{ settings.hash() }"#,
     with_cached_flag = true
 )]
 async fn pull_cached(
-    client: &mut oci_distribution::Client,
+    client: &mut oci_client::Client,
     settings: PullSettings<'_>,
-) -> Result<cached::Return<oci_distribution::client::ImageData>> {
+) -> Result<cached::Return<oci_client::client::ImageData>> {
     let auth = settings.auth();
     let image = settings.image();
 
@@ -160,8 +160,8 @@ struct PullManifestSettings {
 
 impl PullManifestSettings {
     fn new(
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
     ) -> PullManifestSettings {
         let image_str = image.whole();
         let auth_sigstore: super::config::Auth = From::from(auth);
@@ -173,15 +173,15 @@ impl PullManifestSettings {
     }
 
     #[allow(clippy::unwrap_used)]
-    pub fn image(&self) -> oci_distribution::Reference {
+    pub fn image(&self) -> oci_client::Reference {
         // we can use `unwrap` here, because this will never fail
-        let reference: oci_distribution::Reference = self.image.parse().unwrap();
+        let reference: oci_client::Reference = self.image.parse().unwrap();
         reference
     }
 
-    pub fn auth(&self) -> oci_distribution::secrets::RegistryAuth {
+    pub fn auth(&self) -> oci_client::secrets::RegistryAuth {
         let internal_auth: &super::config::Auth = &self.auth;
-        let a: oci_distribution::secrets::RegistryAuth = internal_auth.into();
+        let a: oci_client::secrets::RegistryAuth = internal_auth.into();
         a
     }
 
@@ -194,12 +194,13 @@ impl PullManifestSettings {
     // Because of that the method will return the '0' value when something goes
     // wrong during the serialization operation. This is very unlikely to happen
     pub fn hash(&self) -> String {
-        let mut buf = Vec::new();
-        let mut ser = serde_json::Serializer::with_formatter(&mut buf, CanonicalFormatter::new());
-        if let Err(e) = self.serialize(&mut ser) {
-            error!(err=?e, settings=?self, "Cannot perform canonical serialization");
-            return "0".to_string();
-        }
+        let buf = match serde_json_canonicalizer::to_vec(self) {
+            Ok(vec) => vec,
+            Err(e) => {
+                error!(err=?e, settings=?self, "Cannot perform canonical serialization");
+                return "0".to_string();
+            }
+        };
 
         let mut hasher = Sha256::new();
         hasher.update(&buf);
@@ -219,15 +220,15 @@ impl PullManifestSettings {
 #[cached(
     time = 60,
     result = true,
-    sync_writes = true,
+    sync_writes = "default",
     key = "String",
     convert = r#"{ settings.hash() }"#,
     with_cached_flag = true
 )]
 async fn pull_manifest_cached(
-    client: &mut oci_distribution::Client,
+    client: &mut oci_client::Client,
     settings: PullManifestSettings,
-) -> Result<cached::Return<(oci_distribution::manifest::OciManifest, String)>> {
+) -> Result<cached::Return<(oci_client::manifest::OciManifest, String)>> {
     let image = settings.image();
     let auth = settings.auth();
     client
@@ -240,15 +241,116 @@ async fn pull_manifest_cached(
         .map(cached::Return::new)
 }
 
+/// Internal struct, used to calculate a unique hash of the pull referrers
+/// settings. This is required to cache pull referrers results.
+#[derive(Serialize, Debug)]
+struct PullReferrersSettings {
+    image: String,
+    auth: super::config::Auth,
+    artifact_type: Option<String>,
+}
+
+impl PullReferrersSettings {
+    fn new(
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+        artifact_type: Option<&str>,
+    ) -> PullReferrersSettings {
+        let image_str = image.whole();
+        let auth_sigstore: super::config::Auth = From::from(auth);
+
+        PullReferrersSettings {
+            image: image_str,
+            auth: auth_sigstore,
+            artifact_type: artifact_type.map(str::to_owned),
+        }
+    }
+
+    #[allow(clippy::unwrap_used)]
+    pub fn image(&self) -> oci_client::Reference {
+        // we can use `unwrap` here, because this will never fail
+        let reference: oci_client::Reference = self.image.parse().unwrap();
+        reference
+    }
+
+    pub fn auth(&self) -> oci_client::secrets::RegistryAuth {
+        let internal_auth: &super::config::Auth = &self.auth;
+        let a: oci_client::secrets::RegistryAuth = internal_auth.into();
+        a
+    }
+
+    // This function returns a hash of the PullReferrersSettings struct.
+    // The hash is computed by doing a canonical JSON representation of
+    // the struct.
+    //
+    // This method cannot error, because its value is used by the `cached`
+    // macro, which doesn't allow error handling.
+    // Because of that the method will return the '0' value when something goes
+    // wrong during the serialization operation. This is very unlikely to happen
+    pub fn hash(&self) -> String {
+        let buf = match serde_json_canonicalizer::to_vec(self) {
+            Ok(vec) => vec,
+            Err(e) => {
+                error!(err=?e, settings=?self, "Cannot perform canonical serialization");
+                return "0".to_string();
+            }
+        };
+
+        let mut hasher = Sha256::new();
+        hasher.update(&buf);
+        let result = hasher.finalize();
+        result
+            .iter()
+            .map(|v| format!("{v:x}"))
+            .collect::<Vec<String>>()
+            .join("")
+    }
+}
+
+/// Pulls OCI referrers.
+/// Details about this cache:
+///   * the cache is time bound: cached values are purged after 60 seconds
+///   * only successful results are cached
+#[cached(
+    time = 60,
+    result = true,
+    sync_writes = "default",
+    key = "String",
+    convert = r#"{ settings.hash() }"#,
+    with_cached_flag = true
+)]
+async fn pull_referrers_cached(
+    client: &mut oci_client::Client,
+    settings: PullReferrersSettings,
+) -> Result<cached::Return<oci_client::manifest::OciImageIndex>> {
+    let image = settings.image();
+    let auth = settings.auth();
+    let artifact_type = settings.artifact_type.as_deref();
+    client
+        .auth(&image, &auth, oci_client::RegistryOperation::Pull)
+        .await
+        .map_err(|e| SigstoreError::RegistryFetchManifestError {
+            image: image.whole(),
+            error: e.to_string(),
+        })?;
+    client
+        .pull_referrers(&image, artifact_type)
+        .await
+        .map_err(|e| SigstoreError::RegistryPullManifestError {
+            image: image.whole(),
+            error: e.to_string(),
+        })
+        .map(cached::Return::new)
+}
+
 impl ClientCapabilitiesDeps for OciCachingClient {}
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl ClientCapabilities for OciCachingClient {
     async fn fetch_manifest_digest(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
     ) -> Result<String> {
         fetch_manifest_digest_cached(&mut self.registry_client, image, auth)
             .await
@@ -264,10 +366,10 @@ impl ClientCapabilities for OciCachingClient {
 
     async fn pull(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
         accepted_media_types: Vec<&str>,
-    ) -> Result<oci_distribution::client::ImageData> {
+    ) -> Result<oci_client::client::ImageData> {
         let pull_settings = PullSettings::new(image, auth, accepted_media_types);
 
         pull_cached(&mut self.registry_client, pull_settings)
@@ -284,9 +386,9 @@ impl ClientCapabilities for OciCachingClient {
 
     async fn pull_manifest(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
-    ) -> Result<(oci_distribution::manifest::OciManifest, String)> {
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+    ) -> Result<(oci_client::manifest::OciManifest, String)> {
         let pull_manifest_settings = PullManifestSettings::new(image, auth);
 
         pull_manifest_cached(&mut self.registry_client, pull_manifest_settings)
@@ -303,18 +405,37 @@ impl ClientCapabilities for OciCachingClient {
 
     async fn push(
         &mut self,
-        image_ref: &oci_distribution::Reference,
-        layers: &[oci_distribution::client::ImageLayer],
-        config: oci_distribution::client::Config,
-        auth: &oci_distribution::secrets::RegistryAuth,
-        manifest: Option<oci_distribution::manifest::OciImageManifest>,
-    ) -> Result<oci_distribution::client::PushResponse> {
+        image_ref: &oci_client::Reference,
+        layers: &[oci_client::client::ImageLayer],
+        config: oci_client::client::Config,
+        auth: &oci_client::secrets::RegistryAuth,
+        manifest: Option<oci_client::manifest::OciImageManifest>,
+    ) -> Result<oci_client::client::PushResponse> {
         self.registry_client
             .push(image_ref, layers, config, auth, manifest)
             .await
             .map_err(|e| SigstoreError::RegistryPushError {
                 image: image_ref.whole(),
                 error: e.to_string(),
+            })
+    }
+
+    async fn pull_referrers(
+        &mut self,
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+        artifact_type: Option<&str>,
+    ) -> Result<oci_client::manifest::OciImageIndex> {
+        let settings = PullReferrersSettings::new(image, auth, artifact_type);
+        pull_referrers_cached(&mut self.registry_client, settings)
+            .await
+            .map(|data| {
+                if data.was_cached {
+                    debug!(?image, "Got image referrers from cache");
+                } else {
+                    debug!(?image, "Got image referrers by querying remote registry");
+                }
+                data.value
             })
     }
 }

@@ -24,18 +24,17 @@ use async_trait::async_trait;
 /// For testing purposes, use instead the client inside of the
 /// `mock_client` module.
 pub(crate) struct OciClient {
-    pub registry_client: oci_distribution::Client,
+    pub registry_client: oci_client::Client,
 }
 
 impl ClientCapabilitiesDeps for OciClient {}
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl ClientCapabilities for OciClient {
     async fn fetch_manifest_digest(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
     ) -> Result<String> {
         self.registry_client
             .fetch_manifest_digest(image, auth)
@@ -48,10 +47,10 @@ impl ClientCapabilities for OciClient {
 
     async fn pull(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
         accepted_media_types: Vec<&str>,
-    ) -> Result<oci_distribution::client::ImageData> {
+    ) -> Result<oci_client::client::ImageData> {
         self.registry_client
             .pull(image, auth, accepted_media_types)
             .await
@@ -63,9 +62,9 @@ impl ClientCapabilities for OciClient {
 
     async fn pull_manifest(
         &mut self,
-        image: &oci_distribution::Reference,
-        auth: &oci_distribution::secrets::RegistryAuth,
-    ) -> Result<(oci_distribution::manifest::OciManifest, String)> {
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+    ) -> Result<(oci_client::manifest::OciManifest, String)> {
         self.registry_client
             .pull_manifest(image, auth)
             .await
@@ -77,17 +76,39 @@ impl ClientCapabilities for OciClient {
 
     async fn push(
         &mut self,
-        image_ref: &oci_distribution::Reference,
-        layers: &[oci_distribution::client::ImageLayer],
-        config: oci_distribution::client::Config,
-        auth: &oci_distribution::secrets::RegistryAuth,
-        manifest: Option<oci_distribution::manifest::OciImageManifest>,
-    ) -> Result<oci_distribution::client::PushResponse> {
+        image_ref: &oci_client::Reference,
+        layers: &[oci_client::client::ImageLayer],
+        config: oci_client::client::Config,
+        auth: &oci_client::secrets::RegistryAuth,
+        manifest: Option<oci_client::manifest::OciImageManifest>,
+    ) -> Result<oci_client::client::PushResponse> {
         self.registry_client
             .push(image_ref, layers, config, auth, manifest)
             .await
             .map_err(|e| SigstoreError::RegistryPushError {
                 image: image_ref.whole(),
+                error: e.to_string(),
+            })
+    }
+
+    async fn pull_referrers(
+        &mut self,
+        image: &oci_client::Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+        artifact_type: Option<&str>,
+    ) -> Result<oci_client::manifest::OciImageIndex> {
+        self.registry_client
+            .auth(image, auth, oci_client::RegistryOperation::Pull)
+            .await
+            .map_err(|e| SigstoreError::RegistryFetchManifestError {
+                image: image.whole(),
+                error: e.to_string(),
+            })?;
+        self.registry_client
+            .pull_referrers(image, artifact_type)
+            .await
+            .map_err(|e| SigstoreError::RegistryPullManifestError {
+                image: image.whole(),
                 error: e.to_string(),
             })
     }

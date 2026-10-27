@@ -21,8 +21,10 @@ use thiserror::Error;
 use crate::cosign::{
     constraint::SignConstraintRefVec, verification_constraint::VerificationConstraintRefVec,
 };
+use crate::crypto::merkle::MerkleProofError;
 
 #[cfg(feature = "cosign")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cosign")))]
 #[derive(Error, Debug)]
 #[error("Several Signature Layers failed verification")]
 pub struct SigstoreVerifyConstraintsError<'a> {
@@ -30,6 +32,7 @@ pub struct SigstoreVerifyConstraintsError<'a> {
 }
 
 #[cfg(feature = "cosign")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cosign")))]
 #[derive(Error, Debug)]
 #[error("Several Constraints failed to apply on the SignatureLayer")]
 pub struct SigstoreApplicationConstraintsError<'a> {
@@ -52,6 +55,9 @@ pub enum SigstoreError {
     #[error("invalid key format: {error}")]
     InvalidKeyFormat { error: String },
 
+    #[error("Unable to parse identity token: {0}")]
+    IdentityTokenError(String),
+
     #[error("unmatched key type {key_typ} and signing scheme {scheme}")]
     UnmatchedKeyAndSigningScheme { key_typ: String, scheme: String },
 
@@ -62,10 +68,19 @@ pub enum SigstoreError {
     FromPEMError(#[from] pem::PemError),
 
     #[error(transparent)]
-    CertError(#[from] picky::x509::certificate::CertError),
-
-    #[error(transparent)]
     Base64DecodeError(#[from] base64::DecodeError),
+
+    #[cfg(any(
+        feature = "sign",
+        feature = "sigstore-trust-root",
+        feature = "rekor-models",
+        feature = "verify"
+    ))]
+    #[error(transparent)]
+    HexDecodeError(#[from] hex::FromHexError),
+
+    #[error("Unable to parse checkpoint: {0}")]
+    ParseCheckpointError(String),
 
     #[error("Public key with unsupported algorithm: {0}")]
     PublicKeyUnsupportedAlgorithmError(String),
@@ -73,19 +88,29 @@ pub enum SigstoreError {
     #[error("Public key verification error")]
     PublicKeyVerificationError,
 
+    #[error("No valid signature found for checkpoint")]
+    CheckpointSignatureVerificationError,
+
+    #[error("X.509 certificate version is not V3")]
+    CertificateUnsupportedVersionError,
+
     #[error("Certificate validity check failed: cannot be used before {0}")]
     CertificateValidityError(String),
 
     #[error("Certificate has not been issued for {0}")]
     CertificateInvalidEmail(String),
 
-    #[error("Certificate expired before signatures were entered in log: {integrated_time} is before {not_before}")]
+    #[error(
+        "Certificate expired before signatures were entered in log: {integrated_time} is before {not_before}"
+    )]
     CertificateExpiredBeforeSignaturesSubmittedToRekor {
         integrated_time: String,
         not_before: String,
     },
 
-    #[error("Certificate was issued after signatures were entered in log: {integrated_time} is after {not_after}")]
+    #[error(
+        "Certificate was issued after signatures were entered in log: {integrated_time} is after {not_after}"
+    )]
     CertificateIssuedAfterSignaturesSubmittedToRekor {
         integrated_time: String,
         not_after: String,
@@ -106,6 +131,18 @@ pub enum SigstoreError {
     #[error("Certificate pool error: {0}")]
     CertificatePoolError(String),
 
+    #[error("Consistency proof error: {0:?}")]
+    ConsistencyProofError(MerkleProofError),
+
+    #[error("Inclusion Proof error: {0:?}")]
+    InclusionProofError(MerkleProofError),
+
+    #[error("Signing session expired")]
+    ExpiredSigningSession(),
+
+    #[error("Fulcio request unsuccessful: {0}")]
+    FulcioClientError(String),
+
     #[error("Cannot fetch manifest of {image}: {error}")]
     RegistryFetchManifestError { image: String, error: String },
 
@@ -118,8 +155,37 @@ pub enum SigstoreError {
     #[error("Cannot push {image}: {error}")]
     RegistryPushError { image: String, error: String },
 
+    #[error("Rekor request unsuccessful: {0}")]
+    RekorClientError(String),
+
+    #[error("Rekor public key not found for key id {0}")]
+    RekorPublicKeyNotFoundError(String),
+
+    #[error(transparent)]
+    JoinError(#[from] tokio::task::JoinError),
+
+    #[cfg(feature = "cert")]
+    #[error(transparent)]
+    KeyringError(#[from] crate::crypto::keyring::KeyringError),
+
+    #[cfg(any(feature = "sign", feature = "verify"))]
+    #[error(transparent)]
+    SCTError(#[from] crate::crypto::transparency::SCTError),
+
+    // HACK(tnytown): Remove when we rework the Fulcio V2 endpoint.
+    #[cfg(any(feature = "fulcio", feature = "oauth"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "fulcio", feature = "oauth"))))]
+    #[error(transparent)]
+    ReqwestError(#[from] reqwest::Error),
+
     #[error("OCI reference not valid: {reference}")]
     OciReferenceNotValidError { reference: String },
+
+    #[error("Sigstore bundle malformed: {0}")]
+    SigstoreBundleMalformedError(String),
+
+    #[error("Sigstore PKI file is malformed: {0}")]
+    SigstorePKIFileMalformedError(String),
 
     #[error("Layer doesn't have Sigstore media type")]
     SigstoreMediaTypeNotFoundError,
@@ -139,15 +205,26 @@ pub enum SigstoreError {
     #[error("No Signature Layer passed verification")]
     SigstoreNoVerifiedLayer,
 
-    #[cfg(feature = "tuf")]
+    #[cfg(feature = "sigstore-trust-root")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sigstore-trust-root")))]
     #[error(transparent)]
     TufError(#[from] Box<tough::error::Error>),
 
     #[error("TUF target {0} not found inside of repository")]
     TufTargetNotFoundError(String),
 
+    #[error("{0}")]
+    TufMetadataError(String),
+
     #[error(transparent)]
     IOError(#[from] std::io::Error),
+
+    #[error("IOError: {context}: {source}")]
+    IOErrorWithContext {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("{0}")]
     UnexpectedError(String),
@@ -156,10 +233,17 @@ pub enum SigstoreError {
     VerificationConstraintError(String),
 
     #[error("{0}")]
+    VerificationMaterialError(String),
+
+    #[error("{0}")]
     ApplyConstraintError(String),
 
     #[error("Verification of OIDC claims received from OpenIdProvider failed")]
     ClaimsVerificationError,
+
+    #[cfg(feature = "oauth")]
+    #[error("Claims configuration error: {0}")]
+    ClaimsConfigurationError(#[from] openidconnect::ConfigurationError),
 
     #[error("Failed to access token endpoint")]
     ClaimsAccessPointError,
@@ -167,24 +251,23 @@ pub enum SigstoreError {
     #[error("Failed to get id_token")]
     NoIDToken,
 
-    #[error("Pkcs8 error : {0}")]
-    PKCS8Error(String),
+    #[error("Key parsing error: {0}")]
+    KeyParsingError(String),
 
-    #[error("Pkcs8 spki error : {0}")]
-    PKCS8SpkiError(String),
+    #[error("Key generation error: {0}")]
+    KeyGenerationError(String),
 
-    #[error("Pkcs8 der encoding/decoding error : {0}")]
-    PKCS8DerError(String),
+    #[error("Signing error: {0}")]
+    SigningError(String),
 
-    #[error(transparent)]
-    ECDSAError(#[from] ecdsa::Error),
+    #[error("Certificate parsing error: {0}")]
+    CertificateParsingError(String),
 
-    #[error(transparent)]
-    ECError(#[from] elliptic_curve::Error),
-
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
     ScryptKDFInvalidParamsError(#[from] scrypt::errors::InvalidParams),
 
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
     ScryptKDFInvalidOutputLenError(#[from] scrypt::errors::InvalidOutputLen),
 
@@ -200,15 +283,18 @@ pub enum SigstoreError {
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
 
+    #[cfg(feature = "crypto")]
+    #[error(transparent)]
+    WebPKIError(#[from] webpki::Error),
+
     #[error("Failed to parse the key: {0}")]
     KeyParseError(String),
 
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
-    RSAError(#[from] rsa::errors::Error),
+    X509ParseError(#[from] x509_cert::der::Error),
 
+    #[cfg(feature = "crypto")]
     #[error(transparent)]
-    PKCS1Error(#[from] pkcs1::Error),
-
-    #[error(transparent)]
-    Ed25519PKCS8Error(#[from] ed25519_dalek::pkcs8::spki::Error),
+    X509BuilderError(#[from] x509_cert::builder::Error),
 }

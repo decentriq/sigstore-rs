@@ -18,11 +18,11 @@ pub(crate) mod test {
     use crate::errors::{Result, SigstoreError};
 
     use async_trait::async_trait;
-    use oci_distribution::{
-        client::{ImageData, PushResponse},
-        manifest::OciManifest,
-        secrets::RegistryAuth,
+    use oci_client::{
         Reference,
+        client::{ImageData, PushResponse},
+        manifest::{OciImageIndex, OciManifest},
+        secrets::RegistryAuth,
     };
 
     #[derive(Default)]
@@ -31,12 +31,12 @@ pub(crate) mod test {
         pub pull_response: Option<anyhow::Result<ImageData>>,
         pub pull_manifest_response: Option<anyhow::Result<(OciManifest, String)>>,
         pub push_response: Option<anyhow::Result<PushResponse>>,
+        pub pull_referrers_response: Option<anyhow::Result<OciImageIndex>>,
     }
 
     impl crate::registry::ClientCapabilitiesDeps for MockOciClient {}
 
-    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[async_trait]
     impl crate::registry::ClientCapabilities for MockOciClient {
         async fn fetch_manifest_digest(
             &mut self,
@@ -106,11 +106,11 @@ pub(crate) mod test {
 
         async fn push(
             &mut self,
-            image_ref: &oci_distribution::Reference,
-            _layers: &[oci_distribution::client::ImageLayer],
-            _config: oci_distribution::client::Config,
-            _auth: &oci_distribution::secrets::RegistryAuth,
-            _manifest: Option<oci_distribution::manifest::OciImageManifest>,
+            image_ref: &oci_client::Reference,
+            _layers: &[oci_client::client::ImageLayer],
+            _config: oci_client::client::Config,
+            _auth: &oci_client::secrets::RegistryAuth,
+            _manifest: Option<oci_client::manifest::OciImageManifest>,
         ) -> Result<PushResponse> {
             let mock_response =
                 self.push_response
@@ -127,6 +127,28 @@ pub(crate) mod test {
                 }),
                 Err(e) => Err(SigstoreError::RegistryPushError {
                     image: image_ref.whole(),
+                    error: e.to_string(),
+                }),
+            }
+        }
+
+        async fn pull_referrers(
+            &mut self,
+            image: &oci_client::Reference,
+            _auth: &oci_client::secrets::RegistryAuth,
+            _artifact_type: Option<&str>,
+        ) -> Result<OciImageIndex> {
+            let mock_response = self.pull_referrers_response.as_ref().ok_or_else(|| {
+                SigstoreError::RegistryPullManifestError {
+                    image: image.whole(),
+                    error: String::from("No pull_referrers_response provided!"),
+                }
+            })?;
+
+            match mock_response {
+                Ok(r) => Ok(r.clone()),
+                Err(e) => Err(SigstoreError::RegistryPullManifestError {
+                    image: image.whole(),
                     error: e.to_string(),
                 }),
             }

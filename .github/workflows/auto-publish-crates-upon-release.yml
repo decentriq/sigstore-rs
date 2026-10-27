@@ -3,15 +3,34 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   publish-automatically:
+    name: Publish crates
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # needed to get OpenID Connect token for authentication
+
     steps:
-      -  uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
-      -  uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
-         with:
-           toolchain: stable
-           override: true
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
+        id: auth
+
+      - name: Rustup
+        run: |
+          rustup install stable
+          rustup override set stable
 
       - name: publish crates
-        run: cargo publish --token ${{ secrets.CARGO_API_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: "${{ steps.auth.outputs.token }}"
+        run: cargo publish

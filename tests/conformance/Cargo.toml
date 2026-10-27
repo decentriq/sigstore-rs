@@ -1,0 +1,21 @@
+[package]
+authors = ["sigstore-rs developers"]
+description = "sigstore conformance testing workflow"
+edition = "2021"
+license = "Apache-2.0"
+name = "sigstore-conformance"
+version = "0.0.1"
+
+[dependencies]
+anyhow = "1.0.75"
+clap = { version = "4.0.8", features = ["derive"] }
+serde_json = "1.0.107"
+sigstore = { path = "../../", default-features = false, features = [
+    "full",
+    "native-tls",
+] }
+tracing-subscriber = "0.3"
+
+[[bin]]
+name = "sigstore"
+path = "conformance.rs"
