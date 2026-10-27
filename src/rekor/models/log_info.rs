@@ -86,8 +86,8 @@ impl LogInfo {
     }
     /// Verify the consistency of the proof provided by the log.
     ///
-    /// Example:
-    /// ```rust
+    /// Example (requires a reachable, non-empty live Rekor log):
+    /// ```rust,no_run
     /// use sigstore::crypto::{CosignVerificationKey, SigningScheme};
     /// use sigstore::rekor::apis::configuration::Configuration;
     /// use sigstore::rekor::apis::pubkey_api::get_public_key;

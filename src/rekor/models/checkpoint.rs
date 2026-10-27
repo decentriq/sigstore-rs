@@ -68,8 +68,9 @@ pub enum ParseCheckpointError {
 }
 
 impl SignedCheckpoint {
-    // decode from format used by Rekor for envelopes (signed notes)
-    // See https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#signed-envelope
+    /// Decode a Rekor signed-note envelope. This only parses the envelope;
+    /// call [`Self::verify_signature`] with a trusted key to authenticate it.
+    /// See <https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#signed-envelope>.
     pub fn decode(s: &str) -> Result<Self, ParseCheckpointError> {
         // refer to: https://github.com/sigstore/rekor/blob/d702f84e6b8b127662c5e717ee550de1242a6aec/pkg/util/signed_note.go
 
@@ -90,8 +91,8 @@ impl SignedCheckpoint {
         Ok(SignedCheckpoint { note, signatures })
     }
 
-    // encode into format used by Rekor for envelopes (signed notes)
-    // See https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#signed-envelope
+    /// Encode a Rekor signed-note envelope, preserving the supplied signatures.
+    /// See <https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#signed-envelope>.
     pub fn encode(&self) -> String {
         let note = self.note.marshal() + "\n";
         let empty_line = "\n";
@@ -149,7 +150,7 @@ impl SignedCheckpoint {
 
 impl Checkpoint {
     /// marshals the note
-    /// See https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#checkpoint-body
+    /// See <https://github.com/transparency-dev/formats/blob/2de64aa755f08489bda36125786ced79688af872/log/README.md#checkpoint-body>.
     pub fn marshal(&self) -> String {
         let hash_b64 = BASE64_STANDARD.encode(self.hash);
         let other_content: String = self.other_content.iter().fold(String::new(), |mut acc, c| {
